@@ -21,8 +21,8 @@
 
 bl_info = {
         "name": "Asset Flinger",
-        "version": (0, 2),
-        "blender": (2, 70, 0),
+        "version": (0, 3),
+        "blender": (2, 80, 0),
         "location": "View3D > Add > Mesh > Asset Flinger",
         "description": "Simple Mesh Importer",
         "category": "Add Mesh"}
@@ -30,17 +30,49 @@ bl_info = {
 import bpy
 import bgl
 import blf
+import gpu
+from gpu_extras.batch import batch_for_shader
 import os
 import pprint
+from math import sin, cos, atan2, pi
+from mathutils import Vector, Matrix
+from bpy_extras import view3d_utils, object_utils
 
 from bpy.types import AddonPreferences
 from bpy.props import (BoolProperty, EnumProperty,
                        FloatProperty, FloatVectorProperty,
                        IntProperty, StringProperty)
 
-class AssetFlingerPreferences(AddonPreferences):
+def draw_rectangle(vertices):
+    # https://docs.blender.org/api/blender2.8/gpu.html
+    indices = ((0, 1, 2), (2, 1, 3))
+    shader = gpu.shader.from_builtin('2D_UNIFORM_COLOR')
+    batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
+    shader.bind()
+    #shader.uniform_float("color", (0, 0.5, 0.5, 1.0))
+    batch.draw(shader)
+
+def draw_image(texture, pos, texCoord):
+    shader = gpu.shader.from_builtin('2D_IMAGE')
+    batch = batch_for_shader(
+        shader, 'TRI_FAN',
+        {
+            "pos": pos,
+            "texCoord": texCoord,
+        },
+    )
+
+    #------ TEXTURE ---------#
+    bgl.glBindTexture(bgl.GL_TEXTURE_2D, texture.bindcode)
+
+    shader.bind()
+    shader.uniform_int("image", 0)
+    batch.draw(shader)
+
+
+class AST_OT_AssetFlingerPreferences(AddonPreferences):
     bl_idname = __name__
-    custom_library_path = StringProperty(
+    custom_library_path : StringProperty(
             name="Your Library",
             subtype='FILE_PATH',
             )
@@ -89,36 +121,28 @@ def drawMenuItem(item, x, y, width, height):
 
     bgl.glEnable(bgl.GL_BLEND)
     if item['highlighted']:
-        bgl.glColor4f(0.555, 0.555, 0.555, 0.8)
+        bgl.glBlendColor(0.555, 0.555, 0.555, 0.8)
     else:
-        bgl.glColor4f(0.447, 0.447, 0.447, 0.8)
+        bgl.glBlendColor(0.447, 0.447, 0.447, 0.8)
 
-    bgl.glRectf(x, y, x + width, y + height)
+    vertices = ((x, y), (x+width, y),
+                (x, y+height), (x+width, y+height))
+    draw_rectangle(vertices)
 
     texture = item['icon']
-    texture.gl_load()
-    bgl.glColor4f(0.0, 0.0, 1.0, 0.5)
+    if texture.gl_load():
+        raise Exception()
+
+    bgl.glBlendColor(0.0, 0.0, 1.0, 0.5)
     #bgl.glLineWidth(1.5)
 
-    #------ TEXTURE ---------#
-    bgl.glEnable(bgl.GL_BLEND)
-    bgl.glBindTexture(bgl.GL_TEXTURE_2D, texture.bindcode[0])
-    bgl.glTexParameteri(bgl.GL_TEXTURE_2D, bgl.GL_TEXTURE_MIN_FILTER, bgl.GL_NEAREST)
-    bgl.glTexParameteri(bgl.GL_TEXTURE_2D, bgl.GL_TEXTURE_MAG_FILTER, bgl.GL_NEAREST) #GL_LINEAR seems to be used in Blender for background images
-    bgl.glEnable(bgl.GL_TEXTURE_2D)
-    bgl.glBlendFunc(bgl.GL_SRC_ALPHA, bgl.GL_ONE_MINUS_SRC_ALPHA)
+    pos = ((x + iconMarginX, y), (x + iconMarginX, y + iconHeight),
+           (x + iconMarginX + iconWidth, y + iconHeight),
+           (x + iconMarginX + iconWidth , y))
 
-    bgl.glColor4f(1,1,1,1)
-    bgl.glBegin(bgl.GL_QUADS)
-    bgl.glTexCoord2d(0,0)
-    bgl.glVertex2d(x + iconMarginX, y)
-    bgl.glTexCoord2d(0,1)
-    bgl.glVertex2d(x + iconMarginX, y + iconHeight)
-    bgl.glTexCoord2d(1,1)
-    bgl.glVertex2d(x + iconMarginX + iconWidth, y + iconHeight)
-    bgl.glTexCoord2d(1,0)
-    bgl.glVertex2d(x + iconMarginX + iconWidth , y)
-    bgl.glEnd()
+    texCoord = ((0, 0), (1, 0), (1, 1), (0, 1))
+
+    draw_image(texture, pos, texCoord)
 
     texture.gl_free()
 
@@ -127,6 +151,8 @@ def drawMenuItem(item, x, y, width, height):
     blf.position(font_id, x + iconMarginX + iconWidth + textMarginX, y + iconHeight * 0.5 - 0.25 * textHeight, 0)
     blf.size(font_id, textHeight, textWidth)
     blf.draw(font_id, item['text'])
+
+    bgl.glDisable(bgl.GL_BLEND)
 
 def drawCallbackMenu(self, context):
 
@@ -137,10 +163,13 @@ def drawCallbackMenu(self, context):
     marginY = 5
     paddingX = 5
 
-
     bgl.glEnable(bgl.GL_BLEND)
-    bgl.glColor4f(0.0, 0.0, 0.0, 0.6)
-    bgl.glRectf(0,0,context.area.regions[4].width,context.area.regions[4].height)
+    bgl.glBlendColor(0.0, 0.0, 0.0, 0.6)
+    width = context.area.regions[4].width
+    height = context.area.regions[4].height
+    vertices = ((0, 0), (width, 0),
+                (0, height), (width, height))
+    #draw_rectangle(vertices)
 
     contentWidth = context.area.regions[4].width - marginX * 2
     contentHeight = context.area.regions[4].height - marginY * 2
@@ -161,7 +190,7 @@ def drawCallbackMenu(self, context):
     if len(self.current_dir_content ) == 0:
         font_id = 0
         text = "Folder doesn't contain any assets!"
-        bgl.glColor4f(1.0, 1.0, 1.0, 1.0)
+        bgl.glBlendColor(1.0, 1.0, 1.0, 1.0)
         blf.size(font_id, 20, 72)
         textWidth, textHeight = blf.dimensions(font_id, text)
         blf.position(font_id, contentX + contentWidth * 0.5 - textWidth * 0.5, contentY - contentHeight * 0.5 + textHeight * 0.5, 0)
@@ -185,7 +214,7 @@ def drawCallbackMenu(self, context):
 
     bgl.glDisable(bgl.GL_BLEND)
     bgl.glDisable(bgl.GL_TEXTURE_2D)
-    #bgl.glColor4f(0.0, 0.0, 0.0, 1.0)
+    #bgl.glBlendColor(0.0, 0.0, 0.0, 1.0)
 
 def getClicked(self, context):
 
@@ -226,7 +255,7 @@ def getClicked(self, context):
             row += 1
     return None
 
-class AssetFlingerMenu(bpy.types.Operator):
+class AST_OT_AssetFlingerMenu(bpy.types.Operator):
 
     bl_idname = "view3d.asset_flinger"
     bl_label = "Asset Flinger"
@@ -270,7 +299,15 @@ class AssetFlingerMenu(bpy.types.Operator):
                 bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
                 bpy.ops.import_scene.obj(filepath=selected['filename'])
                 bpy.ops.view3d.snap_selected_to_cursor()
-                bpy.context.scene.objects.active = bpy.context.selected_objects[0]
+                collection_name = "imported_assets"
+                c = bpy.data.collections.get(collection_name)
+                scene = bpy.context.scene
+                if c is not None:
+                    c.objects.link(bpy.context.selected_objects[0])
+                else:
+                    c = bpy.data.collections.new(collection_name)
+                    scene.collection.children.link(c)
+                    c.objects.link(bpy.context.selected_objects[0])
 
                 return {'FINISHED'}
 
@@ -430,18 +467,30 @@ class AssetFlingerMenu(bpy.types.Operator):
             self.report({'WARNING'}, "View3D not found, cannot show asset flinger")
             return {'CANCELLED'}
 
+"""
+# N Panel
+class AST_PT_ASTMGR(Panel):
+    bl_label = "Easy HDRI"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "TOOLS"
+    bl_category = 'Easy HDRI'
+    bl_region_type = 'TOOLS'
+
+    def draw(self, context):
+"""
+
 # store keymaps here to access after registration
 addon_keymaps = []
 
 def menu_draw(self, context):
     layout = self.layout
     layout.separator()
-    layout.operator(AssetFlingerMenu.bl_idname, icon='MOD_SCREW')
+    layout.operator(AST_OT_AssetFlingerMenu.bl_idname, icon='MOD_SCREW')
 
 def register():
-    bpy.utils.register_class(AssetFlingerMenu)
-    bpy.types.INFO_MT_mesh_add.append(menu_draw)
-    bpy.utils.register_class(AssetFlingerPreferences)
+    bpy.utils.register_class(AST_OT_AssetFlingerMenu)
+    bpy.types.VIEW3D_MT_mesh_add.append(menu_draw)
+    bpy.utils.register_class(AST_OT_AssetFlingerPreferences)
 
     # handle the keymap
     wm = bpy.context.window_manager
@@ -468,8 +517,8 @@ def register():
     addon_keymaps.append((km, kmi))
 
 def unregister():
-    bpy.utils.unregister_class(AssetFlingerMenu)
-    bpy.utils.unregister_class(AssetFlingerPreferences)
+    bpy.utils.unregister_class(AST_OT_AssetFlingerMenu)
+    bpy.utils.unregister_class(AST_OT_AssetFlingerPreferences)
 
     # handle the keymap
     for km, kmi in addon_keymaps:
